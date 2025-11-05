@@ -16,7 +16,7 @@ import type { EmbeddingService } from '../../embeddings/EmbeddingService.js';
  */
 export interface FalkorDBStorageProviderOptions {
   /**
-   * Neo4j connection configuration
+   * FalkorDB connection configuration
    */
   config?: Partial<FalkorDBConfig>;
 
@@ -79,12 +79,12 @@ interface ExtendedRelation {
   metadata?: Record<string, unknown> | null;
 }
 
-// These interfaces are used for documentation purposes to understand the Neo4j data model
+// These interfaces are used for documentation purposes to understand the FalkorDB data model
 
 /**
  * Extended SemanticSearchOptions with additional properties needed for FalkorDB
  */
-interface Neo4jSemanticSearchOptions extends SemanticSearchOptions {
+interface FalkorDBSemanticSearchOptions extends SemanticSearchOptions {
   queryVector?: number[];
 }
 
@@ -96,7 +96,7 @@ interface KnowledgeGraphWithDiagnostics extends KnowledgeGraph {
 }
 
 /**
- * A storage provider that uses Neo4j to store the knowledge graph
+ * A storage provider that uses FalkorDB to store the knowledge graph
  */
 export class FalkorDBStorageProvider implements StorageProvider {
   private connectionManager: FalkorDBConnectionManager;
@@ -611,7 +611,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         timeTaken,
       };
     } catch (error) {
-      logger.error('Error searching nodes in Neo4j', error);
+      logger.error('Error searching nodes in FalkorDB', error);
       throw error;
     }
   }
@@ -676,7 +676,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         timeTaken,
       };
     } catch (error) {
-      logger.error('Error opening nodes in Neo4j', error);
+      logger.error('Error opening nodes in FalkorDB', error);
       throw error;
     }
   }
@@ -796,7 +796,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error creating entities in Neo4j', error);
+      logger.error('Error creating entities in FalkorDB', error);
       throw error;
     }
   }
@@ -912,7 +912,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error creating relations in Neo4j', error);
+      logger.error('Error creating relations in FalkorDB', error);
       throw error;
     }
   }
@@ -1138,7 +1138,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error adding observations in Neo4j', error);
+      logger.error('Error adding observations in FalkorDB', error);
       throw error;
     }
   }
@@ -1181,7 +1181,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error deleting entities in Neo4j', error);
+      logger.error('Error deleting entities in FalkorDB', error);
       throw error;
     }
   }
@@ -1296,7 +1296,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error deleting observations in Neo4j', error);
+      logger.error('Error deleting observations in FalkorDB', error);
       throw error;
     }
   }
@@ -1345,7 +1345,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error deleting relations in Neo4j', error);
+      logger.error('Error deleting relations in FalkorDB', error);
       throw error;
     }
   }
@@ -1525,7 +1525,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error updating relation in Neo4j', error);
+      logger.error('Error updating relation in FalkorDB', error);
       throw error;
     }
   }
@@ -1804,7 +1804,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error(`Error updating embedding for entity ${entityName} in Neo4j`, error);
+      logger.error(`Error updating embedding for entity ${entityName} in FalkorDB`, error);
       throw error;
     }
   }
@@ -1845,7 +1845,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         // Return the embedding in the expected format
         return {
           vector: embeddingVector,
-          model: 'unknown', // We don't store the model info in Neo4j
+          model: 'unknown', // We don't store the model info in FalkorDB
           lastUpdated: entity.updatedAt || Date.now(),
         };
       } finally {
@@ -1918,7 +1918,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error finding similar entities in Neo4j', error);
+      logger.error('Error finding similar entities in FalkorDB', error);
       return [];
     }
   }
@@ -1930,7 +1930,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
    */
   async semanticSearch(
     query: string,
-    options: SearchOptions & Neo4jSemanticSearchOptions = {}
+    options: SearchOptions & FalkorDBSemanticSearchOptions = {}
   ): Promise<KnowledgeGraphWithDiagnostics> {
     try {
       // Create diagnostics object for debugging
@@ -2304,7 +2304,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
       return textResults;
     } catch (error) {
-      logger.error('Error performing semantic search in Neo4j', error);
+      logger.error('Error performing semantic search in FalkorDB', error);
       throw error;
     }
   }

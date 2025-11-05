@@ -135,10 +135,14 @@ class FalkorDBTransaction {
 
   /**
    * Rollback the transaction (not supported in FalkorDB)
+   * Note: FalkorDB does not support true transactions, so rollback is not possible.
+   * This method logs a warning and returns gracefully to maintain compatibility with Neo4j code.
    */
   async rollback(): Promise<void> {
-    // Cannot rollback in FalkorDB
-    throw new Error('FalkorDB does not support transaction rollback');
+    // Cannot rollback in FalkorDB - log warning and return
+    console.warn(
+      'FalkorDB does not support transaction rollback. Queries have already been executed and cannot be undone.'
+    );
   }
 }
 
