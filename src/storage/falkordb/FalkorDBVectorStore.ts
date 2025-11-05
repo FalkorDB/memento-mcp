@@ -103,11 +103,13 @@ export class FalkorDBVectorStore implements VectorStore {
       // Build metadata clause if provided
       const metadataClause = metadata
         ? Object.entries(metadata)
-            .map(([key, value]) => `e.${key} = $${key}`)
+            .map(([key]) => `e.${key} = $${key}`)
             .join(', ')
         : '';
 
-      const setClause = metadataClause ? `SET e.embedding = $vector, ${metadataClause}` : 'SET e.embedding = $vector';
+      const setClause = metadataClause
+        ? `SET e.embedding = $vector, ${metadataClause}`
+        : 'SET e.embedding = $vector';
 
       const params: Record<string, unknown> = {
         name: entityName,
@@ -130,11 +132,21 @@ export class FalkorDBVectorStore implements VectorStore {
   /**
    * Search for vectors similar to the query vector
    * @param queryVector The vector to search for
-   * @param limit Maximum number of results to return
+   * @param options Search options
    * @returns Array of search results with scores
    */
-  async search(queryVector: number[], limit = 10): Promise<VectorSearchResult[]> {
+  async search(
+    queryVector: number[],
+    options?: {
+      limit?: number;
+      filter?: Record<string, any>;
+      hybridSearch?: boolean;
+      minSimilarity?: number;
+    }
+  ): Promise<VectorSearchResult[]> {
     this.ensureInitialized();
+
+    const limit = options?.limit || 10;
 
     // Validate vector dimensions
     if (queryVector.length !== this.dimensions) {
@@ -157,13 +169,21 @@ export class FalkorDBVectorStore implements VectorStore {
       const records = Array.isArray(result.records) ? result.records : [];
       return records.map((record: any) => ({
         id: record.name || record.node?.name,
-        score: record.score || 0,
+        similarity: record.score || 0,
         metadata: record.node || {},
       }));
     } catch (error) {
       logger.error('Failed to search vectors', error);
       throw error;
     }
+  }
+
+  /**
+   * Remove a vector by entity ID (implementation of VectorStore interface method)
+   * @param id Entity ID or name
+   */
+  async removeVector(id: string | number): Promise<void> {
+    return this.deleteVector(id);
   }
 
   /**

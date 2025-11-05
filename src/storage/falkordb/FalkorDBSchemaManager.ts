@@ -47,9 +47,11 @@ export class FalkorDBSchemaManager {
     this.log('Listing existing constraints...');
     try {
       const result = await this.connectionManager.executeQuery('SHOW CONSTRAINTS');
-      const constraints = Array.isArray(result.records) ? result.records : [];
+      const constraints = Array.isArray(result.records)
+        ? result.records.map((r) => r.toObject())
+        : [];
       this.log(`Found ${constraints.length} constraints`);
-      return constraints as Record<string, unknown>[];
+      return constraints;
     } catch (error) {
       this.log(`Error listing constraints: ${error}`);
       return [];
@@ -64,9 +66,9 @@ export class FalkorDBSchemaManager {
     this.log('Listing existing indexes...');
     try {
       const result = await this.connectionManager.executeQuery('SHOW INDEXES');
-      const indexes = Array.isArray(result.records) ? result.records : [];
+      const indexes = Array.isArray(result.records) ? result.records.map((r) => r.toObject()) : [];
       this.log(`Found ${indexes.length} indexes`);
-      return indexes as Record<string, unknown>[];
+      return indexes;
     } catch (error) {
       this.log(`Error listing indexes: ${error}`);
       return [];
