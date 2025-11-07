@@ -554,10 +554,6 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
-            error
-          );
-          logger.error(
             'Error during saveGraph - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
@@ -864,10 +860,6 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
-            error
-          );
-          logger.error(
             'Error during createEntities - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
@@ -1008,10 +1000,6 @@ export class FalkorDBStorageProvider implements StorageProvider {
           return createdRelations;
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
-          logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
-            error
-          );
           logger.error(
             'Error during createRelations - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
@@ -1260,7 +1248,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            'Error during addObservations - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
           await txc.rollback();
@@ -1320,7 +1308,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            'Error during deleteEntities - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
           await txc.rollback();
@@ -1439,7 +1427,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            'Error during deleteObservations - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
           await txc.rollback();
@@ -1492,7 +1480,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            'Error during deleteRelations - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
           await txc.rollback();
@@ -1676,7 +1664,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            'Error during updateRelation - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
           await txc.rollback();
@@ -1959,7 +1947,7 @@ export class FalkorDBStorageProvider implements StorageProvider {
         } catch (error) {
           // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
           logger.error(
-            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            'Error during updateEntityEmbedding - attempting rollback (note: FalkorDB rollback is a no-op)',
             error
           );
           await txc.rollback();
