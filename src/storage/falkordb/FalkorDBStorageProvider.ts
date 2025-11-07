@@ -2078,6 +2078,392 @@ export class FalkorDBStorageProvider implements StorageProvider {
   }
 
   /**
+   * Create diagnostics object for semantic search
+   * @private
+   */
+  private createDiagnostics(
+    query: string,
+    options: SearchOptions & FalkorDBSemanticSearchOptions
+  ): Record<string, any> {
+    return {
+      query,
+      startTime: Date.now(),
+      stepsTaken: [
+        {
+          step: 'start',
+          timestamp: Date.now(),
+          options: {
+            query,
+            hybridSearch: options.hybridSearch,
+            hasQueryVector: !!options.queryVector,
+            limit: options.limit,
+            entityTypes: options.entityTypes,
+            minSimilarity: options.minSimilarity,
+          },
+        },
+      ],
+    };
+  }
+
+  /**
+   * Ensure vector store is initialized
+   * @private
+   */
+  private async ensureVectorStoreReady(diagnostics: Record<string, any>): Promise<void> {
+    if (!this.vectorStore['initialized']) {
+      logger.info('FalkorDBStorageProvider: Vector store not initialized, initializing now');
+      diagnostics.stepsTaken.push({
+        step: 'vectorStoreInitialization',
+        timestamp: Date.now(),
+        status: 'started',
+      });
+
+      try {
+        await this.vectorStore.initialize();
+        logger.info(
+          'FalkorDBStorageProvider: Vector store initialized successfully for semantic search'
+        );
+        diagnostics.stepsTaken.push({
+          step: 'vectorStoreInitialization',
+          timestamp: Date.now(),
+          status: 'success',
+        });
+      } catch (initError) {
+        logger.error(
+          'FalkorDBStorageProvider: Failed to initialize vector store for semantic search',
+          initError
+        );
+        diagnostics.stepsTaken.push({
+          step: 'vectorStoreInitialization',
+          timestamp: Date.now(),
+          status: 'error',
+          error: initError instanceof Error ? initError.message : String(initError),
+        });
+      }
+    }
+  }
+
+  /**
+   * Get or generate query vector for semantic search
+   * @private
+   */
+  private async getOrGenerateQueryVector(
+    query: string,
+    options: SearchOptions & FalkorDBSemanticSearchOptions,
+    diagnostics: Record<string, any>
+  ): Promise<number[] | null> {
+    // Check if embedding service is available
+    if (!this.embeddingService) {
+      logger.warn('FalkorDBStorageProvider: No embedding service available for semantic search');
+      diagnostics.stepsTaken.push({
+        step: 'embeddingServiceCheck',
+        timestamp: Date.now(),
+        status: 'unavailable',
+      });
+      return options.queryVector || null;
+    }
+
+    diagnostics.stepsTaken.push({
+      step: 'embeddingServiceCheck',
+      timestamp: Date.now(),
+      status: 'available',
+      model: this.embeddingService.getProviderInfo().model,
+      dimensions: this.embeddingService.getProviderInfo().dimensions,
+    });
+
+    // Return existing query vector if provided
+    if (options.queryVector) {
+      return options.queryVector;
+    }
+
+    // Generate query vector
+    try {
+      logger.debug('FalkorDBStorageProvider: Generating query vector for semantic search');
+      diagnostics.stepsTaken.push({
+        step: 'generateQueryEmbedding',
+        timestamp: Date.now(),
+        status: 'started',
+      });
+
+      const queryVector = await this.embeddingService.generateEmbedding(query);
+
+      diagnostics.stepsTaken.push({
+        step: 'generateQueryEmbedding',
+        timestamp: Date.now(),
+        status: 'success',
+        vectorLength: queryVector.length,
+        sampleValues: queryVector.slice(0, 3),
+      });
+
+      logger.debug('FalkorDBStorageProvider: Query vector generated successfully', {
+        vectorLength: queryVector.length,
+      });
+
+      return queryVector;
+    } catch (embedError) {
+      diagnostics.stepsTaken.push({
+        step: 'generateQueryEmbedding',
+        timestamp: Date.now(),
+        status: 'error',
+        error: embedError instanceof Error ? embedError.message : String(embedError),
+      });
+
+      logger.error(
+        'FalkorDBStorageProvider: Failed to generate query vector for semantic search',
+        embedError
+      );
+
+      return null;
+    }
+  }
+
+  /**
+   * Perform direct vector query using FalkorDB's native vector index
+   * @private
+   */
+  private async performDirectVectorQuery(
+    queryVector: number[],
+    limit: number,
+    minSimilarity: number
+  ): Promise<any[]> {
+    const session = await this.connectionManager.getSession();
+
+    try {
+      const vectorResult = await session.run(
+        `
+        CALL db.index.vector.queryNodes(
+          'entity_embeddings',
+          $limit,
+          $embedding
+        )
+        YIELD node, score
+        WHERE score >= $minScore
+        RETURN node.name AS name, node.entityType AS entityType, score
+        ORDER BY score DESC
+      `,
+        {
+          limit,
+          embedding: queryVector,
+          minScore: minSimilarity,
+        }
+      );
+
+      const foundResults = vectorResult.records.length;
+      logger.debug(`FalkorDBStorageProvider: Direct vector search found ${foundResults} results`);
+
+      if (foundResults > 0) {
+        const entityPromises = vectorResult.records.map(async (record) => {
+          const entityName = record.get('name');
+          return this.getEntity(entityName);
+        });
+
+        const entities = (await Promise.all(entityPromises)).filter(Boolean);
+        return entities;
+      }
+
+      return [];
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Perform vector search with fallback logic
+   * @private
+   */
+  private async performVectorSearch(
+    queryVector: number[],
+    options: SearchOptions & FalkorDBSemanticSearchOptions,
+    diagnostics: Record<string, any>
+  ): Promise<KnowledgeGraphWithDiagnostics> {
+    diagnostics.stepsTaken.push({
+      step: 'searchMethod',
+      timestamp: Date.now(),
+      method: 'vectorOnly',
+    });
+
+    const searchLimit = Math.floor(options.limit || 10);
+    const minSimilarity = options.minSimilarity || 0.6;
+
+    diagnostics.stepsTaken.push({
+      step: 'vectorSearch',
+      timestamp: Date.now(),
+      status: 'started',
+      limit: searchLimit,
+      minSimilarity,
+    });
+
+    // Try direct vector search first
+    try {
+      const entities = await this.performDirectVectorQuery(queryVector, searchLimit, minSimilarity);
+
+      diagnostics.stepsTaken.push({
+        step: 'vectorSearch',
+        timestamp: Date.now(),
+        status: 'completed',
+        resultsCount: entities.length,
+      });
+
+      // If no entities found, return empty result
+      if (entities.length === 0) {
+        diagnostics.endTime = Date.now();
+        diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
+
+        const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
+        if (process.env.DEBUG === 'true') {
+          result.diagnostics = diagnostics;
+        }
+        return result;
+      }
+
+      // Get related relations
+      const entityNames = entities.map((e) => e.name);
+      const finalGraph = await this.openNodes(entityNames);
+
+      diagnostics.endTime = Date.now();
+      diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
+
+      if (process.env.DEBUG === 'true') {
+        return {
+          ...finalGraph,
+          diagnostics,
+        };
+      }
+
+      return finalGraph;
+    } catch (error) {
+      logger.error(
+        `FalkorDBStorageProvider: Direct vector search error: ${error instanceof Error ? error.message : String(error)}`
+      );
+      diagnostics.stepsTaken.push({
+        step: 'vectorSearch',
+        timestamp: Date.now(),
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Fallback to findSimilarEntities
+    const results = await this.findSimilarEntities(queryVector, searchLimit * 2);
+
+    // Filter by min similarity and entity types
+    const filteredResults = results
+      .filter((result) => result.score >= minSimilarity)
+      .filter((result) => {
+        if (!options.entityTypes || options.entityTypes.length === 0) {
+          return true;
+        }
+        return options.entityTypes.includes(result.entityType);
+      })
+      .slice(0, searchLimit);
+
+    diagnostics.stepsTaken.push({
+      step: 'filterResults',
+      timestamp: Date.now(),
+      status: 'completed',
+      filteredResultsCount: filteredResults.length,
+    });
+
+    // If no results, return empty graph
+    if (filteredResults.length === 0) {
+      diagnostics.stepsTaken.push({
+        step: 'finalResult',
+        timestamp: Date.now(),
+        status: 'empty',
+      });
+
+      diagnostics.endTime = Date.now();
+      diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
+
+      const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
+      if (process.env.DEBUG === 'true') {
+        result.diagnostics = diagnostics;
+      }
+      return result;
+    }
+
+    // Get the entities and relations
+    const entityNames = filteredResults.map((r) => r.name);
+
+    diagnostics.stepsTaken.push({
+      step: 'openNodes',
+      timestamp: Date.now(),
+      status: 'started',
+      entityNames,
+    });
+
+    const finalGraph = await this.openNodes(entityNames);
+
+    diagnostics.stepsTaken.push({
+      step: 'openNodes',
+      timestamp: Date.now(),
+      status: 'completed',
+      entitiesCount: finalGraph.entities.length,
+      relationsCount: finalGraph.relations.length,
+    });
+
+    diagnostics.endTime = Date.now();
+    diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
+
+    if (process.env.DEBUG === 'true') {
+      return {
+        ...finalGraph,
+        diagnostics,
+      };
+    }
+
+    return finalGraph;
+  }
+
+  /**
+   * Perform text-based search as fallback
+   * @private
+   */
+  private async performTextSearch(
+    query: string,
+    options: SearchOptions & FalkorDBSemanticSearchOptions,
+    diagnostics: Record<string, any>
+  ): Promise<KnowledgeGraphWithDiagnostics> {
+    diagnostics.stepsTaken.push({
+      step: 'searchMethod',
+      timestamp: Date.now(),
+      method: 'textOnly',
+      reason: 'No query vector available',
+    });
+
+    const textSearchLimit = Math.floor(options.limit || 10);
+
+    diagnostics.stepsTaken.push({
+      step: 'textSearch',
+      timestamp: Date.now(),
+      status: 'started',
+      limit: textSearchLimit,
+    });
+
+    const textResults = await this.searchNodes(query, { ...options, limit: textSearchLimit });
+
+    diagnostics.stepsTaken.push({
+      step: 'textSearch',
+      timestamp: Date.now(),
+      status: 'completed',
+      resultsCount: textResults.entities.length,
+      timeTaken: textResults.timeTaken,
+    });
+
+    diagnostics.endTime = Date.now();
+    diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
+
+    if (process.env.DEBUG === 'true') {
+      return {
+        ...textResults,
+        diagnostics,
+      };
+    }
+
+    return textResults;
+  }
+
+  /**
    * Search for entities using semantic search
    * @param query The search query text
    * @param options Search options including semantic search parameters
@@ -2087,27 +2473,8 @@ export class FalkorDBStorageProvider implements StorageProvider {
     options: SearchOptions & FalkorDBSemanticSearchOptions = {}
   ): Promise<KnowledgeGraphWithDiagnostics> {
     try {
-      // Create diagnostics object for debugging
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const diagnostics: Record<string, any> = {
-        query,
-        startTime: Date.now(),
-        stepsTaken: [],
-      };
-
-      // Log start of semantic search
-      diagnostics.stepsTaken.push({
-        step: 'start',
-        timestamp: Date.now(),
-        options: {
-          query,
-          hybridSearch: options.hybridSearch,
-          hasQueryVector: !!options.queryVector,
-          limit: options.limit,
-          entityTypes: options.entityTypes,
-          minSimilarity: options.minSimilarity,
-        },
-      });
+      // Create diagnostics object
+      const diagnostics = this.createDiagnostics(query, options);
 
       // Enhanced logging for semantic search
       logger.debug('FalkorDBStorageProvider: Starting semantic search', {
@@ -2119,344 +2486,18 @@ export class FalkorDBStorageProvider implements StorageProvider {
       });
 
       // Ensure vector store is initialized
-      if (!this.vectorStore['initialized']) {
-        logger.info('FalkorDBStorageProvider: Vector store not initialized, initializing now');
-        diagnostics.stepsTaken.push({
-          step: 'vectorStoreInitialization',
-          timestamp: Date.now(),
-          status: 'started',
-        });
+      await this.ensureVectorStoreReady(diagnostics);
 
-        try {
-          await this.vectorStore.initialize();
-          logger.info(
-            'FalkorDBStorageProvider: Vector store initialized successfully for semantic search'
-          );
-          diagnostics.stepsTaken.push({
-            step: 'vectorStoreInitialization',
-            timestamp: Date.now(),
-            status: 'success',
-          });
-        } catch (initError) {
-          logger.error(
-            'FalkorDBStorageProvider: Failed to initialize vector store for semantic search',
-            initError
-          );
-          diagnostics.stepsTaken.push({
-            step: 'vectorStoreInitialization',
-            timestamp: Date.now(),
-            status: 'error',
-            error: initError instanceof Error ? initError.message : String(initError),
-          });
-          // We'll continue but might fail if the vector operations are called
-        }
+      // Get or generate query vector
+      const queryVector = await this.getOrGenerateQueryVector(query, options, diagnostics);
+
+      // If we have a query vector, perform vector search
+      if (queryVector) {
+        return await this.performVectorSearch(queryVector, options, diagnostics);
       }
 
-      // If no embedding service, log a warning
-      if (!this.embeddingService) {
-        logger.warn('FalkorDBStorageProvider: No embedding service available for semantic search');
-        diagnostics.stepsTaken.push({
-          step: 'embeddingServiceCheck',
-          timestamp: Date.now(),
-          status: 'unavailable',
-        });
-      } else {
-        diagnostics.stepsTaken.push({
-          step: 'embeddingServiceCheck',
-          timestamp: Date.now(),
-          status: 'available',
-          model: this.embeddingService.getProviderInfo().model,
-          dimensions: this.embeddingService.getProviderInfo().dimensions,
-        });
-      }
-
-      // Generate query vector if not provided and embedding service is available
-      if (!options.queryVector && this.embeddingService) {
-        try {
-          logger.debug('FalkorDBStorageProvider: Generating query vector for semantic search');
-          diagnostics.stepsTaken.push({
-            step: 'generateQueryEmbedding',
-            timestamp: Date.now(),
-            status: 'started',
-          });
-
-          options.queryVector = await this.embeddingService.generateEmbedding(query);
-
-          diagnostics.stepsTaken.push({
-            step: 'generateQueryEmbedding',
-            timestamp: Date.now(),
-            status: 'success',
-            vectorLength: options.queryVector.length,
-            sampleValues: options.queryVector.slice(0, 3),
-          });
-
-          logger.debug('FalkorDBStorageProvider: Query vector generated successfully', {
-            vectorLength: options.queryVector.length,
-          });
-        } catch (embedError) {
-          diagnostics.stepsTaken.push({
-            step: 'generateQueryEmbedding',
-            timestamp: Date.now(),
-            status: 'error',
-            error: embedError instanceof Error ? embedError.message : String(embedError),
-          });
-
-          logger.error(
-            'FalkorDBStorageProvider: Failed to generate query vector for semantic search',
-            embedError
-          );
-        }
-      } else if (options.queryVector) {
-        diagnostics.stepsTaken.push({
-          step: 'searchMethod',
-          timestamp: Date.now(),
-          method: 'vectorOnly',
-        });
-
-        const searchLimit = Math.floor(options.limit || 10);
-        const minSimilarity = options.minSimilarity || 0.6;
-
-        diagnostics.stepsTaken.push({
-          step: 'vectorSearch',
-          timestamp: Date.now(),
-          status: 'started',
-          limit: searchLimit,
-          minSimilarity,
-        });
-
-        // DIRECT VECTOR SEARCH IMPLEMENTATION
-        // Instead of using findSimilarEntities - which isn't working in the MCP context
-        // we'll directly use the working technique from our test script
-        try {
-          const session = await this.connectionManager.getSession();
-
-          try {
-            const vectorResult = await session.run(
-              `
-              CALL db.index.vector.queryNodes(
-                'entity_embeddings',
-                $limit,
-                $embedding
-              )
-              YIELD node, score
-              WHERE score >= $minScore
-              RETURN node.name AS name, node.entityType AS entityType, score
-              ORDER BY score DESC
-            `,
-              {
-                limit: searchLimit,
-                embedding: options.queryVector,
-                minScore: minSimilarity,
-              }
-            );
-
-            const foundResults = vectorResult.records.length;
-            logger.debug(
-              `FalkorDBStorageProvider: Direct vector search found ${foundResults} results`
-            );
-
-            if (foundResults > 0) {
-              // Convert to EntityData objects
-              const entityPromises = vectorResult.records.map(async (record) => {
-                const entityName = record.get('name');
-                return this.getEntity(entityName);
-              });
-
-              const entities = (await Promise.all(entityPromises)).filter(Boolean);
-
-              diagnostics.stepsTaken.push({
-                step: 'vectorSearch',
-                timestamp: Date.now(),
-                status: 'completed',
-                resultsCount: entities.length,
-              });
-
-              // If no entities found after filtering, return empty result
-              if (entities.length === 0) {
-                diagnostics.endTime = Date.now();
-                diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-                // Only include diagnostics if DEBUG is enabled
-                const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
-                if (process.env.DEBUG === 'true') {
-                  result.diagnostics = diagnostics;
-                }
-
-                return result;
-              }
-
-              // Get related relations
-              const entityNames = entities.map((e) => e.name);
-              const finalGraph = await this.openNodes(entityNames);
-
-              diagnostics.endTime = Date.now();
-              diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-              // Only include diagnostics if DEBUG is enabled
-              if (process.env.DEBUG === 'true') {
-                return {
-                  ...finalGraph,
-                  diagnostics,
-                };
-              }
-
-              return finalGraph;
-            } else {
-              // No results from vector search
-              diagnostics.stepsTaken.push({
-                step: 'vectorSearch',
-                timestamp: Date.now(),
-                status: 'completed',
-                resultsCount: 0,
-              });
-
-              diagnostics.endTime = Date.now();
-              diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-              // Only include diagnostics if DEBUG is enabled
-              const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
-              if (process.env.DEBUG === 'true') {
-                result.diagnostics = diagnostics;
-              }
-
-              return result;
-            }
-          } catch (error) {
-            logger.error(
-              `FalkorDBStorageProvider: Direct vector search error: ${error instanceof Error ? error.message : String(error)}`
-            );
-            diagnostics.stepsTaken.push({
-              step: 'vectorSearch',
-              timestamp: Date.now(),
-              status: 'error',
-              error: error instanceof Error ? error.message : String(error),
-            });
-          } finally {
-            await session.close();
-          }
-        } catch (error) {
-          logger.error(
-            `FalkorDBStorageProvider: Direct vector search session error: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-
-        // If we get here, the direct approach failed, fall back to original implementation
-        const results = await this.findSimilarEntities(
-          options.queryVector,
-          searchLimit * 2 // findSimilarEntities will handle limit conversion
-        );
-
-        // Filter by min similarity and entity types
-        const filteredResults = results
-          .filter((result) => result.score >= minSimilarity)
-          .filter((result) => {
-            if (!options.entityTypes || options.entityTypes.length === 0) {
-              return true;
-            }
-            return options.entityTypes.includes(result.entityType);
-          })
-          .slice(0, searchLimit);
-
-        diagnostics.stepsTaken.push({
-          step: 'filterResults',
-          timestamp: Date.now(),
-          status: 'completed',
-          filteredResultsCount: filteredResults.length,
-        });
-
-        // If no results, return empty graph
-        if (filteredResults.length === 0) {
-          diagnostics.stepsTaken.push({
-            step: 'finalResult',
-            timestamp: Date.now(),
-            status: 'empty',
-          });
-
-          diagnostics.endTime = Date.now();
-          diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-          // Only include diagnostics if DEBUG is enabled
-          const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
-          if (process.env.DEBUG === 'true') {
-            result.diagnostics = diagnostics;
-          }
-
-          return result;
-        }
-
-        // Get the entities and relations
-        const entityNames = filteredResults.map((r) => r.name);
-
-        diagnostics.stepsTaken.push({
-          step: 'openNodes',
-          timestamp: Date.now(),
-          status: 'started',
-          entityNames,
-        });
-
-        const finalGraph = await this.openNodes(entityNames);
-
-        diagnostics.stepsTaken.push({
-          step: 'openNodes',
-          timestamp: Date.now(),
-          status: 'completed',
-          entitiesCount: finalGraph.entities.length,
-          relationsCount: finalGraph.relations.length,
-        });
-
-        diagnostics.endTime = Date.now();
-        diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-        // Only include diagnostics if DEBUG is enabled
-        if (process.env.DEBUG === 'true') {
-          return {
-            ...finalGraph,
-            diagnostics,
-          };
-        }
-
-        return finalGraph;
-      }
-
-      // If no query vector provided, fall back to text search
-      diagnostics.stepsTaken.push({
-        step: 'searchMethod',
-        timestamp: Date.now(),
-        method: 'textOnly',
-        reason: 'No query vector available',
-      });
-
-      const textSearchLimit = Math.floor(options.limit || 10);
-
-      diagnostics.stepsTaken.push({
-        step: 'textSearch',
-        timestamp: Date.now(),
-        status: 'started',
-        limit: textSearchLimit,
-      });
-
-      const textResults = await this.searchNodes(query, { ...options, limit: textSearchLimit });
-
-      diagnostics.stepsTaken.push({
-        step: 'textSearch',
-        timestamp: Date.now(),
-        status: 'completed',
-        resultsCount: textResults.entities.length,
-        timeTaken: textResults.timeTaken,
-      });
-
-      diagnostics.endTime = Date.now();
-      diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-      // Only include diagnostics if DEBUG is enabled
-      if (process.env.DEBUG === 'true') {
-        return {
-          ...textResults,
-          diagnostics,
-        };
-      }
-
-      return textResults;
+      // Fall back to text search if no query vector available
+      return await this.performTextSearch(query, options, diagnostics);
     } catch (error) {
       logger.error('Error performing semantic search in FalkorDB', error);
       throw error;
