@@ -97,6 +97,13 @@ interface KnowledgeGraphWithDiagnostics extends KnowledgeGraph {
 
 /**
  * A storage provider that uses FalkorDB to store the knowledge graph
+ *
+ * **IMPORTANT: FalkorDB does not support ACID transactions.**
+ * - All queries execute immediately and cannot be rolled back
+ * - The rollback() method is a no-op that only logs a warning
+ * - Operations are NOT atomic - partial failures may leave data in an inconsistent state
+ * - Methods attempt to validate inputs before execution but cannot guarantee atomicity
+ * - Use with caution in scenarios requiring strict data consistency
  */
 export class FalkorDBStorageProvider implements StorageProvider {
   private connectionManager: FalkorDBConnectionManager;
@@ -411,15 +418,50 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
   /**
    * Save a complete knowledge graph to FalkorDB (warning: this will overwrite existing data)
+   *
+   * **WARNING: Not atomic - FalkorDB does not support transactions.**
+   * If this method fails partway through, some entities/relations may be created while others are not.
+   * The rollback attempt is a no-op and cannot undo already-executed queries.
+   *
    * @param graph The knowledge graph to save
    */
   async saveGraph(graph: KnowledgeGraph): Promise<void> {
+    // Pre-validation: Check for basic data integrity before attempting any mutations
+    if (!graph || !Array.isArray(graph.entities) || !Array.isArray(graph.relations)) {
+      throw new Error('Invalid graph: entities and relations must be arrays');
+    }
+
+    // Validate entity names are unique
+    const entityNames = new Set<string>();
+    for (const entity of graph.entities) {
+      if (!entity.name) {
+        throw new Error('All entities must have a name');
+      }
+      if (entityNames.has(entity.name)) {
+        throw new Error(`Duplicate entity name: ${entity.name}`);
+      }
+      entityNames.add(entity.name);
+    }
+
+    // Validate relations reference existing entities
+    for (const relation of graph.relations) {
+      if (!relation.from || !relation.to) {
+        throw new Error('All relations must have from and to fields');
+      }
+      if (!entityNames.has(relation.from)) {
+        throw new Error(`Relation references non-existent entity: ${relation.from}`);
+      }
+      if (!entityNames.has(relation.to)) {
+        throw new Error(`Relation references non-existent entity: ${relation.to}`);
+      }
+    }
+
     try {
       // Start a new session
       const session = await this.connectionManager.getSession();
 
       try {
-        // Begin transaction
+        // Begin transaction (note: FalkorDB doesn't support real transactions)
         const txc = session.beginTransaction();
 
         try {
@@ -510,7 +552,15 @@ export class FalkorDBStorageProvider implements StorageProvider {
             `Saved graph with ${graph.entities.length} entities and ${graph.relations.length} relations to FalkorDB`
           );
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
+          logger.error(
+            'Error during saveGraph - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -683,21 +733,46 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
   /**
    * Create new entities in the knowledge graph
+   *
+   * **WARNING: Not atomic - FalkorDB does not support transactions.**
+   * If this method fails partway through, some entities may be created while others are not.
+   * The rollback attempt is a no-op and cannot undo already-executed queries.
+   *
    * @param entities Array of entities to create
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async createEntities(entities: any[]): Promise<any[]> {
-    try {
-      if (!entities || entities.length === 0) {
-        return [];
-      }
+    // Pre-validation: Check inputs before attempting any mutations
+    if (!entities || entities.length === 0) {
+      return [];
+    }
 
+    // Validate all entities have required fields
+    for (const entity of entities) {
+      if (!entity.name) {
+        throw new Error('All entities must have a name');
+      }
+      if (!entity.entityType) {
+        throw new Error(`Entity ${entity.name} must have an entityType`);
+      }
+    }
+
+    // Check for duplicate names in the batch
+    const names = new Set<string>();
+    for (const entity of entities) {
+      if (names.has(entity.name)) {
+        throw new Error(`Duplicate entity name in batch: ${entity.name}`);
+      }
+      names.add(entity.name);
+    }
+
+    try {
       const session = await this.connectionManager.getSession();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const createdEntities: any[] = [];
 
       try {
-        // Begin transaction
+        // Begin transaction (note: FalkorDB doesn't support real transactions)
         const txc = session.beginTransaction();
 
         try {
@@ -787,7 +862,15 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
           return createdEntities;
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
+          logger.error(
+            'Error during createEntities - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -803,19 +886,40 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
   /**
    * Create new relations between entities
+   *
+   * **WARNING: Not atomic - FalkorDB does not support transactions.**
+   * If this method fails partway through, some relations may be created while others are not.
+   * The rollback attempt is a no-op and cannot undo already-executed queries.
+   *
    * @param relations Array of relations to create
    */
   async createRelations(relations: Relation[]): Promise<Relation[]> {
-    try {
-      if (!relations || relations.length === 0) {
-        return [];
-      }
+    // Pre-validation: Check inputs before attempting any mutations
+    if (!relations || relations.length === 0) {
+      return [];
+    }
 
+    // Validate all relations have required fields
+    for (const relation of relations) {
+      if (!relation.from) {
+        throw new Error('All relations must have a from field');
+      }
+      if (!relation.to) {
+        throw new Error('All relations must have a to field');
+      }
+      if (!relation.relationType) {
+        throw new Error(
+          `Relation from ${relation.from} to ${relation.to} must have a relationType`
+        );
+      }
+    }
+
+    try {
       const session = await this.connectionManager.getSession();
       const createdRelations: Relation[] = [];
 
       try {
-        // Begin transaction
+        // Begin transaction (note: FalkorDB doesn't support real transactions)
         const txc = session.beginTransaction();
 
         try {
@@ -903,7 +1007,15 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
           return createdRelations;
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
+          logger.error(
+            'Error during createRelations - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -919,21 +1031,38 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
   /**
    * Add observations to entities
+   *
+   * **WARNING: Not atomic - FalkorDB does not support transactions.**
+   * This method performs multiple operations (invalidate old entity, create new version, recreate relationships).
+   * If it fails partway through, data may be left in an inconsistent state.
+   * The rollback attempt is a no-op and cannot undo already-executed queries.
+   *
    * @param observations Array of objects with entity name and observation contents
    */
   async addObservations(
     observations: { entityName: string; contents: string[] }[]
   ): Promise<{ entityName: string; addedObservations: string[] }[]> {
-    try {
-      if (!observations || observations.length === 0) {
-        return [];
-      }
+    // Pre-validation: Check inputs before attempting any mutations
+    if (!observations || observations.length === 0) {
+      return [];
+    }
 
+    // Validate all observations have required fields
+    for (const obs of observations) {
+      if (!obs.entityName) {
+        throw new Error('All observations must have an entityName');
+      }
+      if (!obs.contents || !Array.isArray(obs.contents)) {
+        throw new Error(`Observation for entity ${obs.entityName} must have contents array`);
+      }
+    }
+
+    try {
       const session = await this.connectionManager.getSession();
       const results: { entityName: string; addedObservations: string[] }[] = [];
 
       try {
-        // Begin transaction
+        // Begin transaction (note: FalkorDB doesn't support real transactions)
         const txc = session.beginTransaction();
 
         try {
@@ -1129,7 +1258,11 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
           return results;
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -1145,14 +1278,27 @@ export class FalkorDBStorageProvider implements StorageProvider {
 
   /**
    * Delete entities and their relations
+   *
+   * **WARNING: Not atomic - FalkorDB does not support transactions.**
+   * If this method fails partway through, some entities may be deleted while others are not.
+   * The rollback attempt is a no-op and cannot undo already-executed queries.
+   *
    * @param entityNames Array of entity names to delete
    */
   async deleteEntities(entityNames: string[]): Promise<void> {
-    try {
-      if (!entityNames || entityNames.length === 0) {
-        return;
-      }
+    // Pre-validation: Check inputs before attempting any mutations
+    if (!entityNames || entityNames.length === 0) {
+      return;
+    }
 
+    // Validate all entity names are strings
+    for (const name of entityNames) {
+      if (typeof name !== 'string' || !name.trim()) {
+        throw new Error('All entity names must be non-empty strings');
+      }
+    }
+
+    try {
       const session = await this.connectionManager.getSession();
 
       try {
@@ -1172,7 +1318,11 @@ export class FalkorDBStorageProvider implements StorageProvider {
           // Commit transaction
           await txc.commit();
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -1287,7 +1437,11 @@ export class FalkorDBStorageProvider implements StorageProvider {
           // Commit transaction
           await txc.commit();
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -1336,7 +1490,11 @@ export class FalkorDBStorageProvider implements StorageProvider {
           // Commit transaction
           await txc.commit();
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -1516,7 +1674,11 @@ export class FalkorDBStorageProvider implements StorageProvider {
           // Commit transaction
           await txc.commit();
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }
@@ -1795,7 +1957,11 @@ export class FalkorDBStorageProvider implements StorageProvider {
           // Commit transaction
           await txc.commit();
         } catch (error) {
-          // Rollback on error
+          // Attempt rollback (NOTE: This is a no-op in FalkorDB and cannot undo executed queries)
+          logger.error(
+            'Error during operation - attempting rollback (note: FalkorDB rollback is a no-op)',
+            error
+          );
           await txc.rollback();
           throw error;
         }

@@ -131,9 +131,16 @@ export class FalkorDBVectorStore implements VectorStore {
 
   /**
    * Search for vectors similar to the query vector
+   *
+   * **NOTE:** FalkorDB's current vector search implementation has limitations:
+   * - `filter`, `hybridSearch`, and `minSimilarity` options are not yet supported
+   * - These options will be explicitly rejected with an error if provided
+   * - Only `limit` option is currently supported
+   *
    * @param queryVector The vector to search for
    * @param options Search options
    * @returns Array of search results with scores
+   * @throws Error if unsupported options are provided
    */
   async search(
     queryVector: number[],
@@ -146,7 +153,34 @@ export class FalkorDBVectorStore implements VectorStore {
   ): Promise<VectorSearchResult[]> {
     this.ensureInitialized();
 
+    // Validate and reject unsupported options
+    if (options?.filter) {
+      throw new Error(
+        'FalkorDB vector search does not currently support the "filter" option. ' +
+          'Please use vector search without filters or implement post-filtering in application code.'
+      );
+    }
+
+    if (options?.hybridSearch) {
+      throw new Error(
+        'FalkorDB vector search does not currently support the "hybridSearch" option. ' +
+          'Please use standard vector search only.'
+      );
+    }
+
+    if (options?.minSimilarity !== undefined) {
+      throw new Error(
+        'FalkorDB vector search does not currently support the "minSimilarity" option. ' +
+          'Please filter results by similarity score in application code after retrieval.'
+      );
+    }
+
     const limit = options?.limit || 10;
+
+    // Validate limit
+    if (limit < 1) {
+      throw new Error('Limit must be at least 1');
+    }
 
     // Validate vector dimensions
     if (queryVector.length !== this.dimensions) {
