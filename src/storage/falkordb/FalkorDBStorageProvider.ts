@@ -2080,6 +2080,9 @@ export class FalkorDBStorageProvider implements StorageProvider {
   /**
    * Create diagnostics object for semantic search
    * @private
+   * @param query The search query text
+   * @param options Search options
+   * @returns Diagnostics object with initial state
    */
   private createDiagnostics(
     query: string,
@@ -2108,6 +2111,8 @@ export class FalkorDBStorageProvider implements StorageProvider {
   /**
    * Ensure vector store is initialized
    * @private
+   * @param diagnostics Diagnostics object for tracking initialization status
+   * @returns Promise that resolves when initialization is complete or fails
    */
   private async ensureVectorStoreReady(diagnostics: Record<string, any>): Promise<void> {
     if (!this.vectorStore['initialized']) {
@@ -2146,6 +2151,10 @@ export class FalkorDBStorageProvider implements StorageProvider {
   /**
    * Get or generate query vector for semantic search
    * @private
+   * @param query The search query text
+   * @param options Search options
+   * @param diagnostics Diagnostics object for tracking
+   * @returns Promise resolving to query vector or null if unavailable
    */
   private async getOrGenerateQueryVector(
     query: string,
@@ -2220,6 +2229,10 @@ export class FalkorDBStorageProvider implements StorageProvider {
   /**
    * Perform direct vector query using FalkorDB's native vector index
    * @private
+   * @param queryVector The query vector to search for
+   * @param limit Maximum number of results to return
+   * @param minSimilarity Minimum similarity score threshold
+   * @returns Promise resolving to array of matching entities
    */
   private async performDirectVectorQuery(
     queryVector: number[],
@@ -2270,6 +2283,10 @@ export class FalkorDBStorageProvider implements StorageProvider {
   /**
    * Perform vector search with fallback logic
    * @private
+   * @param queryVector The query vector to search for
+   * @param options Search options
+   * @param diagnostics Diagnostics object for tracking
+   * @returns Promise resolving to knowledge graph with optional diagnostics
    */
   private async performVectorSearch(
     queryVector: number[],
@@ -2418,6 +2435,10 @@ export class FalkorDBStorageProvider implements StorageProvider {
   /**
    * Perform text-based search as fallback
    * @private
+   * @param query The search query text
+   * @param options Search options
+   * @param diagnostics Diagnostics object for tracking
+   * @returns Promise resolving to knowledge graph with optional diagnostics
    */
   private async performTextSearch(
     query: string,
