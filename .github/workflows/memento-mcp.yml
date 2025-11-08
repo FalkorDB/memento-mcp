@@ -35,6 +35,17 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      
+      # Set up FalkorDB service for graph database and vector search
+      falkordb:
+        image: falkordb/falkordb:edge
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
     - name: Checkout code
@@ -80,6 +91,16 @@ jobs:
         NEO4J_VECTOR_INDEX: entity_embeddings
         NEO4J_VECTOR_DIMENSIONS: 1536
         NEO4J_SIMILARITY_FUNCTION: cosine
+      
+    - name: Initialize FalkorDB Schema
+      run: npm run falkordb:init
+      env:
+        FALKORDB_HOST: localhost
+        FALKORDB_PORT: 6379
+        FALKORDB_GRAPH_NAME: memento
+        FALKORDB_VECTOR_INDEX: entity_embeddings
+        FALKORDB_VECTOR_DIMENSIONS: 1536
+        FALKORDB_SIMILARITY_FUNCTION: cosine
       
     - name: Run tests
       run: npm test

@@ -33,7 +33,9 @@
     "format": "prettier --write \"**/*.{ts,json,md}\"",
     "fix": "npm run lint:fix && npm run format",
     "neo4j:init": "tsx src/cli/neo4j-setup.ts init",
-    "neo4j:test": "tsx src/cli/neo4j-setup.ts test"
+    "neo4j:test": "tsx src/cli/neo4j-setup.ts test",
+    "falkordb:init": "tsx src/cli/falkordb-setup.ts init",
+    "falkordb:test": "tsx src/cli/falkordb-setup.ts test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.11.0",
