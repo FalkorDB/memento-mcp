@@ -3,9 +3,11 @@ import { FileStorageProvider } from './FileStorageProvider.js';
 import type { VectorStoreFactoryOptions } from './VectorStoreFactory.js';
 import { Neo4jStorageProvider } from './neo4j/Neo4jStorageProvider.js';
 import type { Neo4jConfig } from './neo4j/Neo4jConfig.js';
+import { FalkorDBStorageProvider } from './falkordb/FalkorDBStorageProvider.js';
+import type { FalkorDBConfig } from './falkordb/FalkorDBConfig.js';
 
 export interface StorageProviderConfig {
-  type: 'file' | 'neo4j';
+  type: 'file' | 'neo4j' | 'falkordb';
   options?: {
     memoryFilePath?: string;
     enableDecay?: boolean;
@@ -22,6 +24,15 @@ export interface StorageProviderConfig {
     neo4jVectorIndexName?: string;
     neo4jVectorDimensions?: number;
     neo4jSimilarityFunction?: 'cosine' | 'euclidean';
+    // FalkorDB specific options
+    falkordbHost?: string;
+    falkordbPort?: number;
+    falkordbUsername?: string;
+    falkordbPassword?: string;
+    falkordbGraphName?: string;
+    falkordbVectorIndexName?: string;
+    falkordbVectorDimensions?: number;
+    falkordbSimilarityFunction?: 'cosine' | 'euclidean';
   };
   vectorStoreOptions?: VectorStoreFactoryOptions;
 }
@@ -82,6 +93,31 @@ export class StorageProviderFactory {
 
         provider = new Neo4jStorageProvider({
           config: neo4jConfig,
+          decayConfig: config.options.decayConfig
+            ? {
+                enabled: config.options.decayConfig.enabled ?? true,
+                halfLifeDays: config.options.decayConfig.halfLifeDays,
+                minConfidence: config.options.decayConfig.minConfidence,
+              }
+            : undefined,
+        });
+        break;
+      }
+      case 'falkordb': {
+        // Configure FalkorDB provider
+        const falkordbConfig: Partial<FalkorDBConfig> = {
+          host: config.options.falkordbHost,
+          port: config.options.falkordbPort,
+          username: config.options.falkordbUsername,
+          password: config.options.falkordbPassword,
+          graphName: config.options.falkordbGraphName,
+          vectorIndexName: config.options.falkordbVectorIndexName,
+          vectorDimensions: config.options.falkordbVectorDimensions,
+          similarityFunction: config.options.falkordbSimilarityFunction,
+        };
+
+        provider = new FalkorDBStorageProvider({
+          config: falkordbConfig,
           decayConfig: config.options.decayConfig
             ? {
                 enabled: config.options.decayConfig.enabled ?? true,

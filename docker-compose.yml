@@ -23,3 +23,16 @@ services:
       - ./neo4j-data:/data
       - ./neo4j-logs:/logs
       - ./neo4j-import:/import
+
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: memento-falkordb
+    platform: linux/amd64
+    ports:
+      - "6379:6379"  # Redis protocol port
+    volumes:
+      - ./falkordb-data:/data
+    command: >
+      --loadmodule /FalkorDB/bin/linux-x64-release/src/falkordb.so
+      --save 60 1
+      --appendonly yes
